@@ -1,0 +1,69 @@
+-- Source schema: partitioned payments table + CDC publication.
+-- Rendered from 01_schema.sql.tmpl by scripts/render.sh (replaces __TARGET_TENANT__).
+
+CREATE TABLE payments (
+    tenant_id         text          NOT NULL,
+    payment_id        uuid          NOT NULL,
+    order_id          text          NOT NULL,
+    merchant_id       text          NOT NULL,
+    amount            numeric(18,2) NOT NULL,
+    currency          char(3)       NOT NULL,
+    fee_amount        numeric(18,2),
+    method            text          NOT NULL,
+    status            text          NOT NULL,
+    description       text,
+    auth_code         text,
+    error_description text,
+    created_at        timestamptz   NOT NULL,
+    finalized_at      timestamptz,
+    updated_at        timestamptz   NOT NULL DEFAULT now(),
+    PRIMARY KEY (payment_id, created_at)
+) PARTITION BY RANGE (created_at);
+
+-- Monthly partitions: previous, current and next month, plus a DEFAULT catch-all.
+-- REPLICA IDENTITY is a per-partition property, so it is set right where each
+-- partition is created. The publication row filter references tenant_id (not in
+-- the PK), which is why FULL is required for UPDATE/DELETE to be published.
+DO $$
+DECLARE
+    m      date;
+    p_name text;
+BEGIN
+    FOR i IN -1..1 LOOP
+        m := date_trunc('month', now())::date + make_interval(months => i);
+        p_name := format('payments_%s', to_char(m, 'YYYY_MM'));
+        EXECUTE format(
+            'CREATE TABLE %I PARTITION OF payments FOR VALUES FROM (%L) TO (%L)',
+            p_name, m, m + interval '1 month');
+        EXECUTE format('ALTER TABLE %I REPLICA IDENTITY FULL', p_name);
+    END LOOP;
+    EXECUTE 'CREATE TABLE payments_default PARTITION OF payments DEFAULT';
+    EXECUTE 'ALTER TABLE payments_default REPLICA IDENTITY FULL';
+END $$;
+
+ALTER TABLE payments REPLICA IDENTITY FULL;
+
+CREATE INDEX idx_payments_updated_at ON payments (updated_at);
+CREATE INDEX idx_payments_tenant_updated_at ON payments (tenant_id, updated_at);
+
+CREATE FUNCTION set_updated_at() RETURNS trigger AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payments_set_updated_at
+    BEFORE UPDATE ON payments
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+-- Publication with a row filter: only the target tenant ever leaves the database.
+-- publish_via_partition_root makes changes appear as coming from the parent table.
+CREATE PUBLICATION dbz_payments
+    FOR TABLE payments WHERE (tenant_id = '__TARGET_TENANT__')
+    WITH (publish_via_partition_root = true);
+
+-- Dedicated CDC role (test-only credentials rendered from .env).
+CREATE ROLE __DEBEZIUM_DB_USER__ WITH LOGIN REPLICATION PASSWORD '__DEBEZIUM_DB_PASSWORD__';
+GRANT SELECT ON payments TO __DEBEZIUM_DB_USER__;

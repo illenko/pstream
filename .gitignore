@@ -1,0 +1,7 @@
+# Rendered from *.tmpl by scripts/render.sh
+postgres/init/01_schema.sql
+connect/payments-connector.json
+
+.idea/
+.DS_Store
+/generator/generator
