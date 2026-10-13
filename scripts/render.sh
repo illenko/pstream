@@ -18,9 +18,17 @@ render() {
   sed -e "s/__TARGET_TENANT__/${TARGET_TENANT}/g" \
       -e "s/__DEBEZIUM_DB_USER__/${DEBEZIUM_DB_USER}/g" \
       -e "s/__DEBEZIUM_DB_PASSWORD__/${DEBEZIUM_DB_PASSWORD}/g" \
+      -e "s/__SOURCE_DB_USER__/${SOURCE_DB_USER}/g" \
+      -e "s/__SOURCE_DB_PASSWORD__/${SOURCE_DB_PASSWORD}/g" \
+      -e "s/__SOURCE_DB_NAME__/${SOURCE_DB_NAME}/g" \
+      -e "s/__SINK_DB_USER__/${SINK_DB_USER}/g" \
+      -e "s/__SINK_DB_PASSWORD__/${SINK_DB_PASSWORD}/g" \
+      -e "s/__SINK_DB_NAME__/${SINK_DB_NAME}/g" \
       "${tmpl}" > "${out}"
   echo "rendered ${out} (TARGET_TENANT=${TARGET_TENANT})"
 }
 
 render postgres/init/01_schema.sql.tmpl
 render connect/payments-connector.json.tmpl
+render pgadmin/servers.json.tmpl
+render pgadmin/pgpass.tmpl

@@ -1,0 +1,24 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "source (payments)",
+      "Group": "pstream",
+      "Host": "postgres-source",
+      "Port": 5432,
+      "MaintenanceDB": "__SOURCE_DB_NAME__",
+      "Username": "__SOURCE_DB_USER__",
+      "PassFile": "/tmp/pgpass",
+      "SSLMode": "prefer"
+    },
+    "2": {
+      "Name": "sink",
+      "Group": "pstream",
+      "Host": "postgres-sink",
+      "Port": 5432,
+      "MaintenanceDB": "__SINK_DB_NAME__",
+      "Username": "__SINK_DB_USER__",
+      "PassFile": "/tmp/pgpass",
+      "SSLMode": "prefer"
+    }
+  }
+}

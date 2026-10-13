@@ -71,8 +71,13 @@ generator settings). All credentials there are throwaway test values.
 | UI / API        | URL                    |
 |-----------------|------------------------|
 | AKHQ            | http://localhost:8080  |
+| pgAdmin         | http://localhost:5050  |
 | Kafka Connect   | http://localhost:8083  |
 | Schema Registry | http://localhost:8081  |
+
+pgAdmin opens without a login (desktop mode, POC only) with both databases
+pre-connected: **source (payments)** — the partitioned multi-tenant table — and
+**sink** — the single-tenant copy the consumer maintains.
 
 ## What to look at in AKHQ
 
@@ -147,6 +152,7 @@ connect/
   Dockerfile              # debezium/connect + Confluent Avro converter
   payments-connector.json.tmpl
 akhq/application.yml
+pgadmin/                  # servers.json + pgpass templates (both DBs pre-connected)
 generator/                # Go: multi-tenant inserts + lifecycle updates (pgx only)
 sink/                     # Go: Kafka consumer -> upsert (franz-go, hamba/avro, pgx)
 scripts/                  # render.sh, register-connector.sh, verify.sh

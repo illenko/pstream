@@ -162,6 +162,34 @@ services:
       timeout: 10s
       retries: 24
 
+  pgadmin:
+    image: dpage/pgadmin4:${PGADMIN_VERSION}
+    depends_on:
+      postgres-source:
+        condition: service_healthy
+      postgres-sink:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      # Desktop mode without a master password: the UI opens with both servers
+      # already connected — no login, no manual steps (POC only).
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./pgadmin/pgpass:/pgadmin4/pgpass.src:ro
+    # pgAdmin insists on 0600 permissions for the pgpass file, which a host
+    # bind mount cannot guarantee; copy it into the container first.
+    entrypoint: ["/bin/sh", "-c", "cp /pgadmin4/pgpass.src /tmp/pgpass && chmod 600 /tmp/pgpass && exec /entrypoint.sh"]
+    ports:
+      - "5050:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/misc/ping > /dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 36
+
   generator:
     build:
       context: ./generator

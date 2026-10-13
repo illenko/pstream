@@ -1,6 +1,8 @@
 # Rendered from *.tmpl by scripts/render.sh
 postgres/init/01_schema.sql
 connect/payments-connector.json
+pgadmin/servers.json
+pgadmin/pgpass
 
 .idea/
 .DS_Store
