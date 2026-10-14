@@ -39,10 +39,10 @@ func (d *database) insertPayment(ctx context.Context, p payment) error {
 	_, err := d.pool.Exec(ctx, `
 		INSERT INTO payments
 			(tenant_id, payment_id, order_id, merchant_id, amount, currency,
-			 fee_amount, method, status, description, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			 fee_amount, method, card_token, status, description, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		p.TenantID, p.PaymentID, p.OrderID, p.MerchantID, p.Amount, p.Currency,
-		p.FeeAmount, p.Method, p.Status, p.Description, p.CreatedAt)
+		p.FeeAmount, p.Method, p.CardToken, p.Status, p.Description, p.CreatedAt)
 	return err
 }
 

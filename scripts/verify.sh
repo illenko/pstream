@@ -142,6 +142,28 @@ then pass "6. all records in payments.state have tenant_id = '${TARGET_TENANT}'"
 else fail "6. payments.state contains records of other tenants"
 fi
 
+# --- 7. sensitive column card_token never leaves the source -------------------
+# Populated in the source, dropped by the connector (column.exclude.list), so it
+# must appear in no topic record and have no column in the sink at all.
+src_missing=$(psql_source "SELECT count(*) FROM payments WHERE card_token IS NULL;")
+sink_col=$(psql_sink "SELECT count(*) FROM information_schema.columns
+                      WHERE table_name = 'payments' AND column_name = 'card_token';")
+if python3 - "${DUMP_FILE}" <<'PY'
+import json, sys
+leaked = 0
+with open(sys.argv[1]) as f:
+    for line in f:
+        v = json.loads(line).get("value")
+        if v and "card_token" in v:
+            leaked += 1
+assert leaked == 0, f"{leaked} topic records contain card_token"
+PY
+then topic_ok=1; else topic_ok=0; fi
+if [[ "${src_missing}" == "0" && "${sink_col}" == "0" && "${topic_ok}" == "1" ]]
+then pass "7. card_token present in source, absent from topic and sink"
+else fail "7. card_token leak check (source NULLs=${src_missing}, sink column=${sink_col}, topic clean=${topic_ok})"
+fi
+
 echo
 if [[ ${FAILURES} -eq 0 ]]
 then echo "All checks PASSED"

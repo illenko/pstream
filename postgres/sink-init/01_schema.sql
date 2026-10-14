@@ -1,5 +1,7 @@
 -- Downstream schema: same columns as the source, but a plain table with
--- payment_id as the primary key (the Kafka key).
+-- payment_id as the primary key (the Kafka key). card_token deliberately has
+-- no counterpart here: it is not in the connector's column.include.list, so
+-- it never reaches the topic and the sink never sees it.
 
 CREATE TABLE payments (
     tenant_id         text          NOT NULL,

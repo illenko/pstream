@@ -10,6 +10,9 @@ CREATE TABLE payments (
     currency          char(3)       NOT NULL,
     fee_amount        numeric(18,2),
     method            text          NOT NULL,
+    -- Sensitive: a tokenized card reference. Stays in the source only — it is
+    -- absent from the connector's column.include.list, so it never reaches Kafka.
+    card_token        text          NOT NULL,
     status            text          NOT NULL,
     description       text,
     auth_code         text,

@@ -132,6 +132,38 @@ The sink upsert is guarded by `WHERE payments.updated_at < EXCLUDED.updated_at`,
 which makes it idempotent: replays (e.g. after a re-snapshot) and reordered
 deliveries can never overwrite newer state with older state.
 
+### Excluding sensitive columns
+
+The source table carries one column downstream consumers must never see:
+`card_token` (a tokenized card reference — synthetic in this POC). The connector
+is configured with an **allowlist** of the columns that *are* published:
+
+```json
+"column.include.list": "public.payments.tenant_id,public.payments.payment_id,…"
+```
+
+An allowlist fails **closed**: when someone later adds another sensitive column
+to the table, it stays out of Kafka by default instead of leaking until a
+`column.exclude.list` catches up. The price is restating every published column
+(Debezium forbids combining the two lists), which is acceptable for one table.
+
+Debezium removes filtered columns **before serialization**, so `card_token` is
+absent from the registered Avro schema itself, not blanked per record — nothing
+about it ever reaches Kafka, in either the initial snapshot or streaming. The
+sink table simply has no such column (`postgres/sink-init/01_schema.sql`), and
+`make verify` check 7 proves the chain: values present in the source, zero
+occurrences in the topic, no column in the sink.
+
+Note where this filter *cannot* live: a publication **column list** (`CREATE
+PUBLICATION … FOR TABLE payments (col, …)`) would stop the value even earlier
+(it would never leave the database process, like the tenant row filter), but
+Postgres rejects column lists for UPDATE/DELETE publications unless the list
+covers the replica identity — and this table needs `REPLICA IDENTITY FULL` for
+the row filter, i.e. *all* columns. So the row filter lives in the publication,
+the column filter in the connector. With `column.include.list` the excluded value
+does cross the replication slot to Debezium, which is acceptable: the connector
+is part of the trusted side; the topic is the security boundary here.
+
 ## Active variant
 
 The **publication row filter works** on this PostgreSQL 18 / Debezium 3.7
@@ -147,7 +179,7 @@ Requires Docker with Compose v2. For `make verify` also `curl` and `python3`.
 
 ```bash
 make up       # renders templates, builds, starts everything, waits for health
-make verify   # 6 PASS/FAIL checks (connector, partitioning, counts, tenant isolation)
+make verify   # 7 PASS/FAIL checks (connector, partitioning, counts, tenant isolation, column exclusion)
 make logs     # follow all logs
 make down     # stop (keep volumes)
 make clean    # stop and delete volumes

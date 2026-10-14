@@ -17,6 +17,7 @@ type payment struct {
 	Currency    string
 	FeeAmount   string
 	Method      string
+	CardToken   string
 	Status      string
 	Description string
 	CreatedAt   time.Time
@@ -67,6 +68,7 @@ func (g *generator) newPayment() payment {
 		Currency:    currencies[g.rng.IntN(len(currencies))],
 		FeeAmount:   fmt.Sprintf("%.2f", amount*0.02),
 		Method:      methods[g.rng.IntN(len(methods))],
+		CardToken:   fmt.Sprintf("tok_%016x%016x", g.rng.Uint64(), g.rng.Uint64()),
 		Status:      "created",
 		Description: descriptions[g.rng.IntN(len(descriptions))],
 		CreatedAt:   time.Now(),
