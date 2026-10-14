@@ -10,6 +10,82 @@ partitioned Postgres ──▶ Debezium (pgoutput) ──▶ Kafka (Avro, compac
    monthly partitions     to one tenant              key = payment_id          by updated_at
 ```
 
+## Architecture
+
+Solid arrows are the payment data path; dotted arrows are control, schema and
+observability relationships. Every box is a Docker Compose service (or an object
+inside one).
+
+```mermaid
+flowchart LR
+    subgraph gen_svc["generator (Go)"]
+        GEN["payment lifecycles<br/>created → processing → final<br/>tenants: tenant_a / b / c"]
+    end
+
+    subgraph pg_src["postgres-source  :5432"]
+        PAY[("payments<br/>PARTITION BY RANGE (created_at)<br/>PK (payment_id, created_at)<br/>REPLICA IDENTITY FULL")]
+        PUB["publication dbz_payments<br/>WHERE tenant_id = TARGET_TENANT<br/>publish_via_partition_root"]
+        SLOT["replication slot dbz_payments<br/>plugin: pgoutput"]
+        PAY -- "WAL (wal_level=logical)" --> PUB --> SLOT
+    end
+
+    GEN -- "INSERT / UPDATE<br/>all tenants" --> PAY
+
+    subgraph connect_svc["connect  :8083 (Debezium + Avro converter)"]
+        DBZ["PostgresConnector 'payments'<br/>snapshot: initial, filtered SELECT override<br/>message.key.columns = payment_id"]
+        SMT["SMT chain:<br/>unwrap (ExtractNewRecordState)<br/>route (RegexRouter → payments.state)"]
+        DBZ --> SMT
+    end
+
+    SLOT -- "stream changes<br/>(one tenant only)" --> DBZ
+    PAY -. "initial snapshot<br/>SELECT … WHERE tenant_id = TARGET_TENANT" .-> DBZ
+
+    subgraph kafka_svc["kafka  :9092 (KRaft, single node)"]
+        TOPIC["payments.state<br/>6 partitions, cleanup.policy=compact<br/>key = payment_id (Avro)<br/>value = full row, 15 fields (Avro)"]
+        HB["__debezium-heartbeat.cdc"]
+        INT["connect-configs / -offsets / -status"]
+    end
+
+    SMT -- "produce (Avro)" --> TOPIC
+    DBZ -.-> HB
+    connect_svc -. "worker state" .-> INT
+
+    SR["schema-registry  :8081<br/>payments.state-key / -value"]
+    SMT -. "register schemas" .-> SR
+
+    subgraph sink_svc["sink (Go)"]
+        CONS["consumer group 'sink'<br/>commit offset only after upsert"]
+        UPS["UPSERT … ON CONFLICT (payment_id)<br/>WHERE updated_at < EXCLUDED.updated_at"]
+        CONS --> UPS
+    end
+
+    TOPIC -- "consume (Avro)" --> CONS
+    CONS -. "fetch schemas" .-> SR
+
+    subgraph pg_sink["postgres-sink  :5433"]
+        SPAY[("payments<br/>plain table, PK payment_id<br/>single tenant only")]
+    end
+
+    UPS --> SPAY
+
+    INIT["init-topics (one-shot)"] -. "create topics" .-> kafka_svc
+    REG["register-connector (one-shot)<br/>PUT /connectors/payments/config"] -. "register" .-> DBZ
+    DUMP["topicdump (make verify)"] -. "read whole topic" .-> TOPIC
+
+    AKHQ["AKHQ  :8080"] -.-> kafka_svc
+    AKHQ -.-> SR
+    AKHQ -.-> connect_svc
+
+    PGADMIN["pgAdmin  :5050<br/>both servers pre-connected"] -.-> pg_src
+    PGADMIN -.-> pg_sink
+```
+
+Dependency order at startup (`depends_on` + healthchecks): the databases and
+Kafka come up first; `init-topics` creates the topics; Connect starts once
+Kafka, Schema Registry and the source database are healthy; `register-connector`
+then registers the connector; the generator and sink start only after the
+connector is in place, so no change is ever produced before CDC is listening.
+
 ## The pattern
 
 This is event-carried state transfer: every change ships the **full row after the
