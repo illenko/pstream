@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: pstream
+    folder: pstream
+    type: file
+    disableDeletion: true
+    options:
+      path: /var/lib/grafana/dashboards

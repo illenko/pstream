@@ -1,0 +1,16 @@
+# All metrics arrive via the OTLP receiver (pushed by the OpenTelemetry
+# Collector); Prometheus scrapes nothing itself.
+global:
+  scrape_interval: 15s
+
+otlp:
+  # Keep metric names exactly as the collector sends them (no suffix rewriting),
+  # so queries look the same as with classic Prometheus scraping.
+  translation_strategy: NoTranslation
+
+storage:
+  tsdb:
+    # Recommended with OTLP ingestion: tolerate slightly out-of-order pushes.
+    out_of_order_time_window: 30m
+
+scrape_configs: []

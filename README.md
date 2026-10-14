@@ -78,6 +78,19 @@ flowchart LR
 
     PGADMIN["pgAdmin  :5050<br/>both servers pre-connected"] -.-> pg_src
     PGADMIN -.-> pg_sink
+
+    subgraph monitoring["monitoring"]
+        OTEL["otel-collector<br/>scrape → OTLP push"]
+        PROM["prometheus  :9090<br/>OTLP receiver"]
+        GRAF["grafana  :3000<br/>Debezium dashboard"]
+        PGEXP["postgres-exporter<br/>replication slot lag"]
+        OTEL -- "OTLP/HTTP" --> PROM
+        GRAF -.-> PROM
+    end
+
+    OTEL -. "scrape :9404 (JMX exporter)" .-> connect_svc
+    OTEL -. "scrape :9187" .-> PGEXP
+    PGEXP -. "pg_replication_slots" .-> pg_src
 ```
 
 Dependency order at startup (`depends_on` + healthchecks): the databases and
@@ -144,12 +157,15 @@ make clean    # stop and delete volumes
 no manual steps. Configuration lives in `.env` (image versions, `TARGET_TENANT`,
 generator settings). All credentials there are throwaway test values.
 
-| UI / API        | URL                    |
-|-----------------|------------------------|
-| AKHQ            | http://localhost:8080  |
-| pgAdmin         | http://localhost:5050  |
-| Kafka Connect   | http://localhost:8083  |
-| Schema Registry | http://localhost:8081  |
+| UI / API         | URL                    |
+|------------------|------------------------|
+| AKHQ             | http://localhost:8080  |
+| pgAdmin          | http://localhost:5050  |
+| Grafana          | http://localhost:3000/d/pstream-debezium |
+| Prometheus       | http://localhost:9090  |
+| Kafka Connect    | http://localhost:8083  |
+| Schema Registry  | http://localhost:8081  |
+| Connect metrics  | http://localhost:9404/metrics |
 
 pgAdmin opens without a login (desktop mode, POC only) with both databases
 pre-connected: **source (payments)** — the partitioned multi-tenant table — and
@@ -164,6 +180,38 @@ pre-connected: **source (payments)** — the partitioned multi-tenant table — 
   `min.compaction.lag.ms=60000`, `retention.ms=-1`.
 - **Schema Registry**: subjects `payments.state-key` / `payments.state-value`.
 - **Connect**: connector `payments`, state RUNNING.
+
+## Monitoring
+
+Debezium publishes its metrics as JMX MBeans; the monitoring pipeline streams
+them to Prometheus **as OTLP**:
+
+```
+connect JVM ──(JMX exporter javaagent, :9404)──▶ otel-collector ──(OTLP push)──▶ Prometheus ──▶ Grafana
+postgres-source ──(postgres-exporter, :9187)──────────┘
+```
+
+- The **JMX exporter** javaagent (baked into the Connect image, rules in
+  `monitoring/jmx-exporter.yml`) exposes the Debezium `connector-metrics` MBeans
+  and JVM metrics in Prometheus format on `:9404`.
+- The **OpenTelemetry Collector** (`monitoring/otel-collector.yml`) scrapes that
+  endpoint plus `postgres-exporter`, and pushes everything over **OTLP/HTTP** to
+  Prometheus, which runs with `--web.enable-otlp-receiver` and
+  `translation_strategy: NoTranslation` (metric names stay unchanged), so the
+  same pipeline can later point at any OTLP backend (Grafana Cloud, an
+  observability vendor, another collector) by swapping one exporter block.
+- **postgres-exporter** adds the source-side ground truth: replication-slot
+  metrics (`pg_replication_slots_pg_wal_lsn_diff` = WAL bytes retained by the
+  `dbz_payments` slot — the number that grows and fills the disk if the
+  connector stays down).
+- **Grafana** auto-provisions the datasource and the *Debezium CDC pipeline*
+  dashboard (anonymous admin, no login — POC only): connector up/slot active,
+  lag behind source, events/s by operation, retained WAL, internal queue usage,
+  snapshot state, JVM heap.
+
+Things worth watching in production, all visible on the dashboard:
+`MilliSecondsBehindSource` (CDC lag), `Connected == 0`, retained WAL growth,
+`MilliSecondsSinceLastEvent` vs the 10 s heartbeat, and queue saturation.
 
 ## Observing compaction
 
@@ -229,6 +277,8 @@ connect/
   payments-connector.json.tmpl
 akhq/application.yml
 pgadmin/                  # servers.json + pgpass templates (both DBs pre-connected)
+monitoring/               # jmx-exporter rules, otel-collector, prometheus configs
+grafana/                  # provisioned datasource + Debezium dashboard
 generator/                # Go: multi-tenant inserts + lifecycle updates (pgx only)
 sink/                     # Go: Kafka consumer -> upsert (franz-go, hamba/avro, pgx)
 scripts/                  # render.sh, register-connector.sh, verify.sh

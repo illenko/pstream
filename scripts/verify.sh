@@ -40,7 +40,9 @@ else fail "2. payments partitioning wrong (relkind=${relkind}, leaf partitions=$
 fi
 
 # --- 3. sink row count catches up with the source ----------------------------
-src_count=$(psql_source "SELECT count(*) FROM payments WHERE tenant_id = '${TARGET_TENANT}';")
+# DISTINCT payment_id: the Kafka key (and the sink PK) is payment_id, so that is
+# the identity the pipeline guarantees — one sink row per payment.
+src_count=$(psql_source "SELECT count(DISTINCT payment_id) FROM payments WHERE tenant_id = '${TARGET_TENANT}';")
 sink_count=0
 for _ in $(seq 1 45); do
   sink_count=$(psql_sink "SELECT count(*) FROM payments;")

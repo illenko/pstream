@@ -12,6 +12,8 @@ up: render
 	@echo "All services healthy."
 	@echo "  AKHQ:            http://localhost:8080"
 	@echo "  pgAdmin:         http://localhost:5050"
+	@echo "  Grafana:         http://localhost:3000/d/pstream-debezium"
+	@echo "  Prometheus:      http://localhost:9090"
 	@echo "  Kafka Connect:   http://localhost:8083"
 	@echo "  Schema Registry: http://localhost:8081"
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	cryptorand "crypto/rand"
 	"fmt"
 	"math/rand/v2"
 	"sync"
@@ -93,15 +94,15 @@ func (g *generator) finalStatus() string {
 	}
 }
 
-// uuidV4 builds a random UUID from the seeded rng (keeps pgx the only
-// external dependency). Callers must hold g.mu.
+// uuidV4 builds a random UUID from crypto/rand, NOT from the seeded rng:
+// a deterministic seed would replay the same id sequence after a generator
+// restart, producing new rows that reuse old payment_ids (the composite source
+// PK allows it) and silently merge in the sink. GEN_SEED keeps the business
+// fields reproducible; identity must stay globally unique.
 func (g *generator) uuidV4() string {
 	var b [16]byte
-	for i := 0; i < 16; i += 8 {
-		v := g.rng.Uint64()
-		for j := 0; j < 8; j++ {
-			b[i+j] = byte(v >> (8 * j))
-		}
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		panic(fmt.Sprintf("crypto/rand unavailable: %v", err))
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80

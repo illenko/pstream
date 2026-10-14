@@ -105,6 +105,7 @@ services:
       args:
         DEBEZIUM_VERSION: ${DEBEZIUM_VERSION}
         AVRO_CONVERTER_VERSION: ${AVRO_CONVERTER_VERSION}
+        JMX_EXPORTER_VERSION: ${JMX_EXPORTER_VERSION}
     image: pstream-connect:${DEBEZIUM_VERSION}
     depends_on:
       kafka:
@@ -124,8 +125,13 @@ services:
       CONFIG_STORAGE_REPLICATION_FACTOR: 1
       OFFSET_STORAGE_REPLICATION_FACTOR: 1
       STATUS_STORAGE_REPLICATION_FACTOR: 1
+      # JMX exporter javaagent: Debezium + JVM metrics on :9404 (Prometheus format)
+      KAFKA_OPTS: "-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=9404:/kafka/etc/jmx-exporter.yml"
+    volumes:
+      - ./monitoring/jmx-exporter.yml:/kafka/etc/jmx-exporter.yml:ro
     ports:
       - "8083:8083"
+      - "9404:9404"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors > /dev/null"]
       interval: 5s
@@ -190,6 +196,81 @@ services:
       timeout: 10s
       retries: 36
 
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:${POSTGRES_EXPORTER_VERSION}
+    depends_on:
+      postgres-source:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_NAME: postgresql://${SOURCE_DB_USER}:${SOURCE_DB_PASSWORD}@postgres-source:5432/${SOURCE_DB_NAME}?sslmode=disable
+    command:
+      # replication-slot metrics: WAL retained by the Debezium slot
+      - --collector.replication_slots
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9187/metrics > /dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-otlp-receiver
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy > /dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+
+  otel-collector:
+    build:
+      context: ./monitoring/otel
+      args:
+        OTEL_COLLECTOR_VERSION: ${OTEL_COLLECTOR_VERSION}
+    image: pstream-otel-collector:${OTEL_COLLECTOR_VERSION}
+    command: ["--config=/etc/otelcol/config.yml"]
+    depends_on:
+      connect:
+        condition: service_healthy
+      postgres-exporter:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+    volumes:
+      - ./monitoring/otel-collector.yml:/etc/otelcol/config.yml:ro
+    healthcheck:
+      test: ["CMD", "/busybox", "wget", "-qO-", "http://127.0.0.1:13133"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION}
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      # POC only: anonymous admin, no login form (same philosophy as pgAdmin)
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health > /dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+
   generator:
     build:
       context: ./generator
@@ -251,3 +332,4 @@ volumes:
   postgres-source-data:
   postgres-sink-data:
   kafka-data:
+  prometheus-data:
